@@ -7,15 +7,17 @@ from selenium import webdriver
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions
+from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import TimeoutException, NoSuchElementException, StaleElementReferenceException, ElementNotInteractableException
 
 
+# from selectors import XPATH_SELECTORS
+
 def main():
     # Setup selenium to use Chrome browser w/ profile options
     driver = setup_selenium()
-
+    
     # Load WhatsApp
     if not whatsapp_is_loaded(driver):
         print("Task quit.")
@@ -84,8 +86,11 @@ def setup_selenium(browser='firefox'):
         driver = webdriver.Chrome(
         executable_path=CHROME_BINARY_PATH, options=options)
     elif browser == 'firefox':
+        # FIREFOX_BINARY_PATH = '/usr/local/bin/geckodriver'
+        # FIREFOX_PROFILE = '/home/meher-changlani/snap/firefox/common/.mozilla/firefox/n8nrc8s0.default '
         FIREFOX_BINARY_PATH = os.getenv('FIREFOX_BINARY_PATH')
         FIREFOX_PROFILE = os.getenv('FIREFOX_PROFILE')
+       
         options = webdriver.FirefoxOptions()
         options.profile = webdriver.FirefoxProfile(FIREFOX_PROFILE)  
         options.binary_location = FIREFOX_BINARY_PATH
@@ -146,127 +151,68 @@ def user_is_logged_in(driver, wait_time):
 
     try:
         chat_pane = WebDriverWait(driver, wait_time).until(
-            expected_conditions.presence_of_element_located((By.ID, 'pane-side')))
+            EC.presence_of_element_located((By.ID, 'pane-side')))
         return True
     except TimeoutException:
         return False
     
     
+def scrape_chat(driver, group_name, num_msgs=5):
+    '''Turns the chat into soup and scrapes it for key export information: message sender, message date/time, message contents'''
 
-def get_chats(driver):
-    '''Traverses the WhatsApp chat-pane via keyboard input and collects chat information such as person/group name, last chat time and msg'''
+    wait = WebDriverWait(driver, timeout=10)
+    
+    print("Scraping messages...", end="\r")
 
-    print("Loading your chats...", end="\r")
+    driver.find_element(By.XPATH, f"//div[contains(@aria-label,'Chat list')]//div[contains(@role,'listitem') and descendant::span[contains(text(),'{group_name}')]]").click()
+    try:
+        unread_messages = int(wait.until(EC.presence_of_element_located((By.XPATH, f"//div[contains(@aria-label,'Chat list')]//div[contains(@role,'listitem') and descendant::span[contains(text(),'{group_name}')]]//span[contains(@aria-label,'unread message')]"))).text)
+    except:
+        unread_messages = 0
+        
+    # message_plane = wait.until(EC.presence_of_element_located((By.XPATH, "//div[contains(@role,'application')]")))
+    
+    num_messages_visible=0
+    num_msgs_to_scrape = max(num_msgs, unread_messages)
 
-    # Wrap entire function in a retryable try/catch because chat-pane DOM changes frequently due to users typing, sending messages, and occasional WhatsApp notifications
-    retry_attempts = 0
-    while retry_attempts < 3:
-        retry_attempts += 1
+    while num_messages_visible<num_msgs_to_scrape:
+        message_elems = wait.until(EC.presence_of_all_elements_located((By.XPATH, "//div[contains(@class, 'message-in')]")))
+        num_messages_visible = len(message_elems)
+        driver.execute_script("arguments[0].scrollIntoView(true);", message_elems[0])
+        sleep(1)
+        # print(num_messages_visible)
+  
+    messages = parse_messages(message_elems)
+    
+    print("Scraping Complete!") 
+    print(f"Messages scraped {len(message_elems)}")
+    print(f"Messages parsed {len(messages)}")
+    
+    return messages
 
-        # Try traversing the chat-pane
+
+def parse_messages(message_elems):
+    messages = []
+    for message in message_elems:
         try:
-            # Find the chat search (xpath == 'Search or start new chat' element)
-            chat_search = driver.find_element_by_xpath(
-                '//*[@id="side"]/div[1]/div/label/div/div[2]')
-            chat_search.click()
-
-            # Count how many chat records there are below the search input by using keyboard navigation because HTML is dynamically changed depending on viewport and location in DOM
-            selected_chat = driver.switch_to.active_element
-            prev_chat_id = None
-            is_last_chat = False
-            chats = []
-
-            # Descend through the chats
-            while True:
-                # Navigate to next chat
-                selected_chat.send_keys(Keys.DOWN)
-
-                # Set active element to new chat (without this we can't access the elements '.text' value used below for name/time/msg)
-                selected_chat = driver.switch_to.active_element
-
-                # Check if we are on the last chat by comparing current to previous chat
-                if selected_chat.id == prev_chat_id:
-                    is_last_chat = True
-                else:
-                    prev_chat_id = selected_chat.id
-
-                # Gather chat info (chat name, chat time, and last chat message)
-                if is_last_chat:
-                    break
-                else:
-                    # Get the container of the contact card's title (xpath == parent div container to the span w/ title attribute set to chat name)
-                    contact_title_container = selected_chat.find_element_by_xpath(
-                        "./div/div[2]/div/div[1]")
-                    # Then get all the spans it contains
-                    contact_title_container_spans = contact_title_container.find_elements_by_tag_name(
-                        'span')
-                    # Then loop through all those until we find one w/ a title property
-                    for span_title in contact_title_container_spans:
-                        if span_title.get_property('title'):
-                            name_of_chat = span_title.get_property('title')
-                            break
-
-                    # Get the time (xpath == div element that holds last chat time e.g. 'Wednesday' or '1/1/2021')
-                    last_chat_time = selected_chat.find_element_by_xpath(
-                        "./div/div[2]/div/div[2]").text
-
-                    # Get the last message (xpath == div element that holds a span w/ title attribute set to last chat message)
-                    last_chat_msg_element = selected_chat.find_element_by_xpath(
-                        "./div/div[2]/div[2]/div")
-                    last_chat_msg = last_chat_msg_element.find_element_by_tag_name(
-                        'span').get_attribute('title')
-
-                    # Strip last message of left-to-right directional encoding ('\u202a' and '\u202c') if it exists
-                    if '\u202a' in last_chat_msg or '\u202c' in last_chat_msg:
-                        last_chat_msg = last_chat_msg.lstrip(
-                            u'\u202a')
-                        last_chat_msg = last_chat_msg.rstrip(
-                            u'\u202c')
-
-                    # Check if last message is a group chat and if so prefix the senders name to the message
-                    last_chat_msg_sender = last_chat_msg_element.find_element_by_tag_name(
-                        'span').text
-                    if '\n: \n' in last_chat_msg_sender:
-                        # Group have multiple spans to separate sender, colon, and msg contents e.g. '<sender>: <msg>', so we take the first item after splitting to capture the senders name
-                        last_chat_msg_sender = last_chat_msg_sender.split('\n')[
-                            0]
-
-                        # Prefix the message w/ senders name
-                        last_chat_msg = f"{last_chat_msg_sender}: {last_chat_msg}"
-
-                    # Store chat info within a dict
-                    chat = {"name": name_of_chat,
-                            "time": last_chat_time, "message": last_chat_msg}
-                    chats.append(chat)
-
-            # Navigate back to the top of the chat list
-            chat_search.click()
-            chat_search.send_keys(Keys.DOWN)
-
-            print("Success! Your chats have been loaded.")
-            break
-
-        # Catch errors related to DOM changes
-        except (StaleElementReferenceException, ElementNotInteractableException) as e:
-            if retry_attempts == 3:
-                # Make sure we grant user option to exit if DOM keeps changing while scanning chat list
-                print("This is taking longer than usual...")
-                while True:
-                    response = input(
-                        "Try loading chats again (y/n)? ")
-                    if response.strip().lower() in {'n', 'no'}:
-                        print(
-                            'Error! Aborting chat load by user due to frequent DOM changes.')
-                        if type(e).__name__ == 'StaleElementReferenceException':
-                            raise StaleElementReferenceException
-                        else:
-                            raise ElementNotInteractableException
-                    elif response.strip().lower() in {'y', 'yes'}:
-                        retry_attempts = 0
-                        break
-                    else:
-                        continue
-            else:
-                pass
-
-    return chats
+            copyable_scrape={'message': None, 'sender': None, 'datetime': None, 'recalled_msg': False, 'has_images': False}
+            msg_text = message.find_elements(By.XPATH, ".//span[contains(@class, 'selectable-text')]")
+            if msg_text:
+                copyable_scrape['message'] = msg_text[0].text
+            
+                temp = message.find_element(By.XPATH, ".//div[contains(@class, 'copyable-text')]").get_attribute('data-pre-plain-text').strip()[1:-1].split('] ')
+                copyable_scrape['sender'] = temp[1]
+                copyable_scrape['datetime'] = temp[0]
+            
+            if message.find_elements(By.XPATH, ".//span[contains(@class, 'quoted-mention')]"):
+                copyable_scrape['recalled_msg'] = True
+                
+            imgs = message.find_elements(By.XPATH, ".//div[contains(@aria-label, 'Open picture')]")
+            if imgs:
+                copyable_scrape['has_images'] = True
+                # imgs[0].find_element(By.XPATH, ".//img").get_attribute('src')
+            messages.append(copyable_scrape)
+        except:
+            continue
+    
+    return messages
