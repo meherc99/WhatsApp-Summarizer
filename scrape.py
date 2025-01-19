@@ -10,13 +10,14 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import TimeoutException, NoSuchElementException, StaleElementReferenceException, ElementNotInteractableException
-
-
+from openai import OpenAI
 # from selectors import XPATH_SELECTORS
 
-def main():
-    # Setup selenium to use Chrome browser w/ profile options
-    driver = setup_selenium()
+SENDER_MAPPING={}
+
+
+def summarize_chat(group_name, num_msgs=10, browser='firefox'):
+    driver = setup_selenium(browser)
     
     # Load WhatsApp
     if not whatsapp_is_loaded(driver):
@@ -24,60 +25,63 @@ def main():
         driver.quit()
         return
 
-    # Get chats
-    chats = get_chats(driver)
+    messages = scrape_chat(driver, group_name, num_msgs)
+    
+    # summarizer_prompt=f"""
+    # Summarize all these text messages part of an AI Masters group chat for the course '{group_name}'
 
-    # Print chat summary
-    # print_chats(chats)
+    # Keep in mind that these messages could have important announcements, questions, or answers to questions.
 
-    # Prompt user to select a chat for export, then locate and load it in WhatsApp
-    finished = False
-    while not finished:
-        chat_is_loaded = False
-        while not chat_is_loaded:
-            # Select a chat and locate in WhatsApp
-            chat_is_loadable = False
-            while not chat_is_loadable:
-                # Ask user what chat to export
-                selected_chat = select_chat(chats)
-                if not selected_chat:
-                    print("You've quit WhatSoup.")
-                    driver.quit()
-                    return
+    # Overall split the summary into the following sections:
+    # - Announcements
+    # - Questions and clarifications (summarize the intermediate discussion and provide the final answer. For each topic, include its title and summary in bullet points. The bullets should include detailed information.)
+    # - General discussion
+    # - Action items (if any)
+    # - Important links or resources shared
+    # - Other
 
-                # Find the selected chat in WhatsApp
-                found_selected_chat = find_selected_chat(driver, selected_chat)
-                if found_selected_chat:
-                    # Break and proceed to load/scrape the chat
-                    chat_is_loadable = True
-                else:
-                    # Clear chat search
-                    driver.find_element_by_xpath(
-                        '//*[@id="side"]/div[1]/div/span/button').click()
+    # """
+    summarizer_prompt = """
+        Read the whole chat and find out how to solve the issue of a beeping fire alarm.
+    """
+    load_dotenv()
 
-            # Load entire chat history
-            chat_is_loaded = load_selected_chat(driver)
+    OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 
-        # Scrape the chat history
-        scraped = scrape_chat(driver)
+    client = OpenAI(api_key=OPENAI_API_KEY)
 
-        # Export the chat
-        scrape_is_exported(selected_chat, scraped)
+    summarizer_messages = [
+            {
+                "role": "developer",
+                "content": summarizer_prompt
+            }
+        ]
+    
+    full_chat = ""
+    for i in range(len(messages)):
+        # messages[i]['sender'] = encode_senders(messages[i]['sender'])
+        full_chat += f"{encode_senders(messages[i]['sender'])}: {messages[i]['message']}\n"
 
-        # Ask user if they wish to finish and exit WhatSoup
-        finished = user_is_finished()
-
-    # Quit WhatSoup
-    print("You've quit WhatSoup.")
-    driver.quit()
-    return
-
-
+    summarizer_messages.append({'role': 'user', 'content': full_chat})
+    
+    response = client.chat.completions.create(model="gpt-4o-mini",
+            messages=summarizer_messages,
+            # response_format={"type": "json_object"},
+            temperature=0.1)
+    
+    response_content = response.choices[0].message.content
+    
+    print(response_content)
+    return response_content
+    
+    
 def setup_selenium(browser='firefox'):
     '''Setup Selenium to use webdriver'''
 
     # Load driver and chrome profile from local directories
     load_dotenv()
+    
+    print("Setting up Selenium...")
     if browser == 'chrome':
         CHROME_BINARY_PATH = os.getenv('CHROME_BINARY_PATH') 
         CHROME_PROFILE = os.getenv('CHROME_PROFILE')
@@ -98,7 +102,7 @@ def setup_selenium(browser='firefox'):
 
     # Change default script timeout from 30sec to 90sec for execute_script tasks which slow down significantly in very large chats
     driver.set_script_timeout(90)
-
+    print("Selenium setup complete!")
     return driver
 
 
@@ -216,3 +220,19 @@ def parse_messages(message_elems):
             continue
     
     return messages
+
+
+def generate_alpha_encoding():
+    temp = list(SENDER_MAPPING.values())
+    if temp:
+        last_element = temp[-1]
+        return chr(ord(last_element) + 1)
+    else:
+        return 'A'
+ 
+  
+def encode_senders(sender):
+    if sender not in SENDER_MAPPING:
+        SENDER_MAPPING[sender] = generate_alpha_encoding() 
+    
+    return SENDER_MAPPING[sender] # 1-based index
