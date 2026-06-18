@@ -27,23 +27,23 @@ def summarize_chat(group_name, num_msgs=10, browser='firefox'):
 
     messages = scrape_chat(driver, group_name, num_msgs)
     
-    # summarizer_prompt=f"""
-    # Summarize all these text messages part of an AI Masters group chat for the course '{group_name}'
+    summarizer_prompt=f"""
+    Summarize all these text messages part of an AI Masters group chat for the course '{group_name}'
 
-    # Keep in mind that these messages could have important announcements, questions, or answers to questions.
+    Keep in mind that these messages could have important announcements, questions, or answers to questions.
 
-    # Overall split the summary into the following sections:
-    # - Announcements
-    # - Questions and clarifications (summarize the intermediate discussion and provide the final answer. For each topic, include its title and summary in bullet points. The bullets should include detailed information.)
-    # - General discussion
-    # - Action items (if any)
-    # - Important links or resources shared
-    # - Other
+    Overall split the summary into the following sections:
+    - Announcements
+    - Questions and clarifications (summarize the intermediate discussion and provide the final answer. For each topic, include its title and summary in bullet points. The bullets should include detailed information.)
+    - General discussion
+    - Action items (if any)
+    - Important links or resources shared
+    - Other
 
     # """
-    summarizer_prompt = """
-        Read the whole chat and find out how to solve the issue of a beeping fire alarm.
-    """
+    # summarizer_prompt = """
+    #     Read the whole chat and find out how to solve the issue of a beeping fire alarm.
+    # """
     load_dotenv()
 
     OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
